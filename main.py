@@ -7,7 +7,7 @@ from flask import Flask
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
-# إعداد السجلات لمراقبة البوت في Render
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("GuardianBot")
 
@@ -20,7 +20,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# --- 2. الإعدادات والبيانات ---
+# --- 2. الإعدادات ---
 API_ID = 30101219
 API_HASH = '2b246afdb60e01c2480732e31b5616a4'
 STRING_SESSION = os.getenv('STRING_SESSION')
@@ -35,24 +35,17 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 3. تشغيل العميل (UserBot) ---
-if not STRING_SESSION:
-    logger.error("❌ STRING_SESSION missing in Environment Variables!")
-    exit(1)
-
+# --- 3. إنشاء العميل ---
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# --- 4. معالجة الرسائل الواردة (الحماية) ---
+# --- 4. معالجة الرسائل (الحماية) ---
 @client.on(events.NewMessage(incoming=True))
 async def protector(event):
     if event.is_private:
         sender_id = event.sender_id
-        
-        # استثناء الأدمن (أنت) والرسائل المحفوظة
         if sender_id == ADMIN_ID:
             return
 
-        # فحص قاعدة البيانات
         conn = sqlite3.connect(DB_FILE)
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,))
@@ -63,10 +56,10 @@ async def protector(event):
             logger.info(f"🛡️ حظر: حذف رسالة من شخص غريب (ID: {sender_id})")
             await event.delete()
 
-# --- 5. أوامر التحكم (تنفذها أنت فقط) ---
+# --- 5. أوامر التحكم ---
 @client.on(events.NewMessage(pattern=r'\.add (\d+)'))
 async def add_to_list(event):
-    if event.out: # يعمل فقط عندما تكتب أنت الأمر
+    if event.out:
         try:
             target_id = int(event.pattern_match.group(1))
             conn = sqlite3.connect(DB_FILE)
@@ -75,19 +68,21 @@ async def add_to_list(event):
             conn.close()
             await event.edit(f"✅ تم السماح للمعرف {target_id} بمراسلتك.")
         except:
-            await event.edit("❌ خطأ: يرجى كتابة الرقم بشكل صحيح.")
+            await event.edit("❌ خطأ في الرقم.")
 
-@client.on(events.NewMessage(pattern=r'\.status'))
-async def status(event):
-    if event.out:
-        await event.edit("🛡️ الحارس الشخصي يعمل الآن بنجاح على منصة Render.")
-
-# --- 6. التشغيل النهائي ---
-if __name__ == '__main__':
+# --- 6. وظيفة التشغيل الأساسية (Async) ---
+async def start_bot():
     init_db()
+    logger.info("🚀 Starting Guarding Service...")
+    await client.start()
+    await client.run_until_disconnected()
+
+if __name__ == '__main__':
     # تشغيل Flask في خيط منفصل
     threading.Thread(target=run_flask, daemon=True).start()
     
-    logger.info("🚀 Starting Guarding Service...")
-    client.start()
-    client.run_until_disconnected()
+    # تشغيل البوت باستخدام asyncio.run لتجنب خطأ Loop
+    try:
+        asyncio.run(start_bot())
+    except KeyboardInterrupt:
+        pass
