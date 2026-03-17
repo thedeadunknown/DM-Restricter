@@ -61,7 +61,7 @@ async def protector_handler(event):
         logging.info(f"Deleting message from unauthorized user: {sender_id}")
         await event.delete()
 
-@client.on(events.NewMessage(pattern='/add (\d+)'))
+@client.on(events.NewMessage(pattern=r'/add (\d+)'))
 async def add_to_whitelist(event):
     # التأكد أن المرسل هو الأدمن (أنت)
     if event.sender_id != ADMIN_ID:
