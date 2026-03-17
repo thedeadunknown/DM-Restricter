@@ -4,7 +4,7 @@ import threading
 import logging
 import asyncio
 from flask import Flask
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 # إعداد السجلات
@@ -24,8 +24,6 @@ API_ID = 30101219
 API_HASH = '2b246afdb60e01c2480732e31b5616a4'
 STRING_SESSION = os.getenv('STRING_SESSION')
 ADMIN_ID = 8591539773 
-
-# ضع هنا ID المجموعة الخاصة (الوسيط) - سأعلمك كيف تجده
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0)) 
 
 DB_FILE = "whitelist.db"
@@ -46,6 +44,7 @@ async def gatekeeper(event):
         sender = await event.get_sender()
         sender_id = event.sender_id
         
+        # تجاهل الرسائل من نفسك أو من البوتات
         if sender_id == ADMIN_ID or sender.bot: return
 
         # فحص القائمة البيضاء
@@ -56,52 +55,45 @@ async def gatekeeper(event):
         conn.close()
 
         if not safe:
-            # 1. حذف الرسالة فوراً من الخاص
             msg_text = event.text
-            await event.delete()
+            await event.delete() # حذف من الخاص فوراً
             
-            # 2. إرسال "بطاقة تعريف" للمجموعة الوسيطة مع أزرار
             if LOG_GROUP_ID != 0:
-                info = f"📩 **طلب مراسلة جديد:**\n"
-                info += f"👤 **الاسم:** {sender.first_name} {sender.last_name or ''}\n"
-                info += f"🆔 **المعرف:** `{sender_id}`\n"
-                info += f"🔗 **الحساب:** @{sender.username or 'لا يوجد'}\n"
-                info += f"💬 **الرسالة:** {msg_text}"
-                
-                buttons = [
-                    [Button.inline("✅ قبول السماح", data=f"ok_{sender_id}"),
-                     Button.inline("❌ حظر نهائي", data=f"no_{sender_id}")]
-                ]
-                await client.send_message(LOG_GROUP_ID, info, buttons=buttons)
+                # إنشاء رسالة تحتوي على أوامر قابلة للضغط (Hyperlinks)
+                info = (
+                    f"📩 **طلب مراسلة جديد:**\n\n"
+                    f"👤 **الاسم:** {sender.first_name} {sender.last_name or ''}\n"
+                    f"🆔 **المعرف:** `{sender_id}`\n"
+                    f"🔗 **الحساب:** @{sender.username or 'None'}\n"
+                    f"💬 **الرسالة:** {msg_text}\n\n"
+                    f"--- **إجراءات التحكم** ---\n"
+                    f"✅ للسماح: `.ok {sender_id}`\n"
+                    f"❌ للرفض: `.no {sender_id}`"
+                )
+                await client.send_message(LOG_GROUP_ID, info)
 
-# --- 2. معالجة ضغطات الأزرار (في المجموعة) ---
-@client.on(events.CallbackQuery)
-async def callback(event):
-    data = event.data.decode('utf-8')
-    admin_who_clicked = event.sender_id
+# --- 2. معالجة الأوامر من مجموعة الوسيط ---
+@client.on(events.NewMessage(pattern=r'\.(ok|no) (\d+)'))
+async def admin_action(event):
+    # التأكد أن الأمر جاء منك أنت وفي مجموعة الوسيط
+    if event.sender_id != ADMIN_ID: return
     
-    # التأكد أنك أنت فقط من يضغط الأزرار
-    if admin_who_clicked != ADMIN_ID:
-        await event.answer("⚠️ لست مخولاً بالتحكم!", alert=True)
-        return
+    action = event.pattern_match.group(1)
+    target_id = int(event.pattern_match.group(2))
 
-    if data.startswith("ok_"):
-        user_id = int(data.split("_")[1])
+    if action == "ok":
         conn = sqlite3.connect(DB_FILE)
-        conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (user_id,))
+        conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (target_id,))
         conn.commit()
         conn.close()
-        await event.edit(f"✅ تم القبول! المعرف {user_id} يمكنه مراسلتك الآن.")
-        
-    elif data.startswith("no_"):
-        user_id = int(data.split("_")[1])
-        # يمكنك إضافة كود للحظر النهائي هنا إذا أردت
-        await event.edit(f"❌ تم الرفض وحذف الطلب (ID: {user_id}).")
+        await event.respond(f"✅ تم إضافة {target_id} للقائمة البيضاء بنجاح.")
+    else:
+        await event.respond(f"🗑️ تم تجاهل طلب المعرف {target_id}.")
 
 # --- 3. الأوامر المعتادة ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ نظام الوسيط يعمل بنجاح!")
+    await event.edit("🛡️ نظام الوسيط (النسخة النصية) يعمل بنجاح!")
 
 async def start_bot():
     init_db()
