@@ -23,7 +23,7 @@ def run_flask():
 # --- 2. الإعدادات والبيانات ---
 API_ID = 30101219
 API_HASH = '2b246afdb60e01c2480732e31b5616a4'
-STRING_SESSION = os.getenv('1AZWarzwBu1lW066xDkcP9zufdQPP-bF6HgC0YEmbetf2-p_vFivwtsxUBASHZtWzK4XBuARWTvXiquxzgVdauogQBhfBoy6zBTbqjEhLzWGGU4yxBbQnqIfGFLXWWJsT0jAlOh57oqygXiI8gawoJm7kRgDKTjUd0l4iPCButJDNxqdR42sb_BtjUVlcbygoCZQemycxRzu5aPAEk75I8hjvDK9xtCYYKLuIS8nqsLQgd5N5xcqq5tbjx7-yGV3vuxbtk_BZVVQxs73HWh1ag63dJ-MQCYoKUK3SouEBN-_x2DzgJAUpWlugc-nWiqp6fysKEwGvhGuK4i45LaoSFZGdMcYh0HQ=')
+STRING_SESSION = os.getenv('STRING_SESSION')
 ADMIN_ID = 8591539773 
 
 DB_FILE = "whitelist.db"
