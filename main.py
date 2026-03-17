@@ -44,10 +44,8 @@ async def gatekeeper(event):
         sender = await event.get_sender()
         sender_id = event.sender_id
         
-        # تجاهل الرسائل من نفسك أو من البوتات
-        if sender_id == ADMIN_ID or sender.bot: return
+        if sender_id == ADMIN_ID or (sender and sender.bot): return
 
-        # فحص القائمة البيضاء
         conn = sqlite3.connect(DB_FILE)
         cur = conn.cursor()
         cur.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,))
@@ -56,15 +54,14 @@ async def gatekeeper(event):
 
         if not safe:
             msg_text = event.text
-            await event.delete() # حذف من الخاص فوراً
+            await event.delete()
             
             if LOG_GROUP_ID != 0:
-                # إنشاء رسالة تحتوي على أوامر قابلة للضغط (Hyperlinks)
                 info = (
                     f"📩 **طلب مراسلة جديد:**\n\n"
-                    f"👤 **الاسم:** {sender.first_name} {sender.last_name or ''}\n"
+                    f"👤 **الاسم:** {sender.first_name if sender else 'Hidden'} {sender.last_name if sender and sender.last_name else ''}\n"
                     f"🆔 **المعرف:** `{sender_id}`\n"
-                    f"🔗 **الحساب:** @{sender.username or 'None'}\n"
+                    f"🔗 **الحساب:** @{sender.username if sender and sender.username else 'None'}\n"
                     f"💬 **الرسالة:** {msg_text}\n\n"
                     f"--- **إجراءات التحكم** ---\n"
                     f"✅ للسماح: `.ok {sender_id}`\n"
@@ -72,28 +69,39 @@ async def gatekeeper(event):
                 )
                 await client.send_message(LOG_GROUP_ID, info)
 
-# --- 2. معالجة الأوامر من مجموعة الوسيط ---
-@client.on(events.NewMessage(pattern=r'\.(ok|no) (\d+)'))
+# --- 2. معالجة الأوامر (السماح، الرفض، والحذف) ---
+@client.on(events.NewMessage(pattern=r'\.(ok|no|rem) (\d+)'))
 async def admin_action(event):
-    # التأكد أن الأمر جاء منك أنت وفي مجموعة الوسيط
+    # السماح بالأمر إذا صدر منك شخصياً أو في مجموعة الوسيط
     if event.sender_id != ADMIN_ID: return
     
     action = event.pattern_match.group(1)
     target_id = int(event.pattern_match.group(2))
 
+    conn = sqlite3.connect(DB_FILE)
     if action == "ok":
-        conn = sqlite3.connect(DB_FILE)
         conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (target_id,))
         conn.commit()
-        conn.close()
-        await event.respond(f"✅ تم إضافة {target_id} للقائمة البيضاء بنجاح.")
-    else:
+        await event.respond(f"✅ تم إضافة {target_id} للقائمة البيضاء.")
+    
+    elif action == "rem":
+        # لا تسمح بحذف نفسك من القائمة
+        if target_id == ADMIN_ID:
+            await event.respond("❌ لا يمكنك حذف حسابك الأساسي من القائمة!")
+        else:
+            conn.execute("DELETE FROM whitelist WHERE user_id = ?", (target_id,))
+            conn.commit()
+            await event.respond(f"🚫 تم حذف {target_id} من القائمة البيضاء. سيتم حظره مجدداً.")
+            
+    else: # action == "no"
         await event.respond(f"🗑️ تم تجاهل طلب المعرف {target_id}.")
+    
+    conn.close()
 
 # --- 3. الأوامر المعتادة ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ نظام الوسيط (النسخة النصية) يعمل بنجاح!")
+    await event.edit("🛡️ نظام الوسيط ACTIVE\nالميزات: الحماية، السماح، الحذف (.rem)")
 
 async def start_bot():
     init_db()
