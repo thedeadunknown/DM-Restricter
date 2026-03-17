@@ -16,15 +16,15 @@ def home():
     return "The Guardian Bot is Online! 🛡️"
 
 def run_flask():
-    # Render يحدد المنفذ تلقائياً عبر متغير البيئة PORT
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# --- إعدادات التلغرام (من متغيرات البيئة) ---
-API_ID = int(os.getenv('30101219', 0))
-API_HASH = os.getenv('2b246afdb60e01c2480732e31b5616a4', '')
-BOT_TOKEN = os.getenv('8275939973:AAEdnqIRYeWIJjU53PqCbc0m0q23FJ4nMD4', '')
-ADMIN_ID = int(os.getenv('8591539773', 0))
+# --- إعدادات التلغرام (استخدام القيم مباشرة) ---
+# ملاحظة: تم وضع القيم التي أرسلتها في الـ default value لضمان عملها
+API_ID = int(os.getenv('API_ID', 30101219))
+API_HASH = os.getenv('API_HASH', '2b246afdb60e01c2480732e31b5616a4')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8275939973:AAEdnqIRYeWIJjU53PqCbc0m0q23FJ4nMD4')
+ADMIN_ID = int(os.getenv('ADMIN_ID', 8591539773))
 
 # ملف قاعدة البيانات المحلي
 DB_FILE = "whitelist.db"
@@ -58,8 +58,10 @@ async def protector_handler(event):
         is_safe = cur.fetchone()
 
     if not is_safe:
-        logging.info(f"Deleting message from unauthorized user: {sender_id}")
-        await event.delete()
+        # لا نحذف رسائل البوت نفسه أو رسائل الأدمن
+        if sender_id != ADMIN_ID:
+            logging.info(f"Deleting message from unauthorized user: {sender_id}")
+            await event.delete()
 
 @client.on(events.NewMessage(pattern=r'/add (\d+)'))
 async def add_to_whitelist(event):
@@ -76,7 +78,7 @@ async def add_to_whitelist(event):
     except Exception as e:
         await event.respond(f"❌ حدث خطأ: {e}")
 
-@client.on(events.NewMessage(pattern='/status'))
+@client.on(events.NewMessage(pattern=r'/status'))
 async def status_check(event):
     if event.sender_id == ADMIN_ID:
         await event.respond("🛡️ البوت يعمل بنجاح ويقوم بحماية الخاص حالياً.")
