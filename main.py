@@ -1,58 +1,94 @@
-import sqlite3
-from telethon import TelegramClient, events
 import os
+import sqlite3
+import threading
+import logging
+from flask import Flask
+from telethon import TelegramClient, events
 
-# بيانات التلغرام (يفضل وضعها في Environment Variables في Render)
-api_id = int(os.getenv('API_ID', '0000000')) # استبدل بالأرقام الخاصة بك
-api_hash = os.getenv('API_HASH', 'your_api_hash_here')
-bot_token = os.getenv('BOT_TOKEN', 'your_bot_token_here')
+# إعداد السجلات لمتابعة ما يحدث في Render Logs
+logging.basicConfig(format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s', level=logging.INFO)
 
-# إعداد قاعدة البيانات لحفظ القائمة البيضاء
-db_path = "whitelist.db"
-conn = sqlite3.connect(db_path, check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
-conn.commit()
+# --- إعداد خادم الويب (لإبقاء البوت حياً) ---
+app = Flask(__name__)
 
-client = TelegramClient('bot_session', api_id, api_hash).start(bot_token=bot_token)
+@app.route('/')
+def home():
+    return "The Guardian Bot is Online! 🛡️"
 
-# دالة للتحقق من وجود المستخدم في القائمة البيضاء
-def is_whitelisted(user_id):
-    cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-    return cursor.fetchone() is not None
+def run_flask():
+    # Render يحدد المنفذ تلقائياً عبر متغير البيئة PORT
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
+
+# --- إعدادات التلغرام (من متغيرات البيئة) ---
+API_ID = int(os.getenv('API_ID', 0))
+API_HASH = os.getenv('API_HASH', '')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+
+# ملف قاعدة البيانات المحلي
+DB_FILE = "whitelist.db"
+
+def init_db():
+    """تهيئة قاعدة البيانات وإضافة الإدمن تلقائياً"""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
+        if ADMIN_ID:
+            conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (ADMIN_ID,))
+        conn.commit()
+    logging.info("Database initialized.")
+
+# إنشاء عميل التلغرام
+client = TelegramClient('guardian_session', API_ID, API_HASH)
+
+# --- معالجة الرسائل ---
 
 @client.on(events.NewMessage(incoming=True))
 async def protector_handler(event):
-    if event.is_private:
-        sender = await event.get_sender()
-        sender_id = event.sender_id
-        
-        # إذا لم يكن في القائمة البيضاء
-        if not is_whitelisted(sender_id):
-            print(f"حذف رسالة من مستخدم غير مصرح به: {sender_id}")
-            await event.delete()
-            # يمكنك إرسال رسالة تحذيرية للمستخدم ثم حذفها لاحقاً إذا أردت
+    # نراقب الرسائل الخاصة فقط
+    if not event.is_private:
+        return
+    
+    sender_id = event.sender_id
+    
+    # التحقق من القائمة البيضاء
+    with sqlite3.connect(DB_FILE) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,))
+        is_safe = cur.fetchone()
 
-@client.on(events.NewMessage(pattern='/add (.+)'))
+    if not is_safe:
+        logging.info(f"Deleting message from unauthorized user: {sender_id}")
+        await event.delete()
+
+@client.on(events.NewMessage(pattern='/add (\d+)'))
 async def add_to_whitelist(event):
-    # أمر لإضافة شخص (للمدير فقط)
+    # التأكد أن المرسل هو الأدمن (أنت)
+    if event.sender_id != ADMIN_ID:
+        return
+    
     try:
         new_id = int(event.pattern_match.group(1))
-        cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (new_id,))
-        conn.commit()
-        await event.respond(f"✅ تم إضافة المعرف {new_id} للقائمة البيضاء.")
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (new_id,))
+            conn.commit()
+        await event.respond(f"✅ تم إضافة المعرف {new_id} إلى القائمة البيضاء.")
     except Exception as e:
-        await event.respond(f"❌ خطأ: تأكد من إرسال ID صحيح.")
+        await event.respond(f"❌ حدث خطأ: {e}")
 
-@client.on(events.NewMessage(pattern='/list'))
-async def show_list(event):
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    if users:
-        msg = "📋 القائمة البيضاء الحالية:\n" + "\n".join([str(u[0]) for u in users])
-        await event.respond(msg)
-    else:
-        await event.respond("القائمة فارغة حالياً.")
+@client.on(events.NewMessage(pattern='/status'))
+async def status_check(event):
+    if event.sender_id == ADMIN_ID:
+        await event.respond("🛡️ البوت يعمل بنجاح ويقوم بحماية الخاص حالياً.")
 
-print("الجهاز يعمل وحماية الخصوصية نشطة...")
-client.run_until_disconnected()
+# --- التشغيل النهائي ---
+if __name__ == '__main__':
+    init_db()
+    
+    # تشغيل Flask في خيط (Thread) منفصل لكي لا يعطل البوت
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    logging.info("Starting Telegram Bot...")
+    client.start(bot_token=BOT_TOKEN)
+    client.run_until_disconnected()
