@@ -12,17 +12,17 @@ logger = logging.getLogger("GatekeeperBot")
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Gatekeeper is ACTIVE 🛡️"
+def home(): return "NoDMBot is ACTIVE 🛡️"
 
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-API_ID = 30101219
-API_HASH = '2b246afdb60e01c2480732e31b5616a4'
-STRING_SESSION = os.getenv('STRING_SESSION')
-ADMIN_ID = 8591539773 
-LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0)) 
+API_ID = int(os.getenv('API_ID', 0))
+API_HASH = os.getenv('API_HASH', '')
+STRING_SESSION = os.getenv('STRING_SESSION', '')
+ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
 
 active_requests = {}
 DB_FILE = "whitelist.db"
