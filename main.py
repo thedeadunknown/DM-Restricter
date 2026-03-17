@@ -21,15 +21,8 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # --- إعدادات التلغرام (من متغيرات البيئة) ---
-API_ID = int(os.getenv('149.154.167.50', 0))
-API_HASH = os.getenv('-----BEGIN RSA PUBLIC KEY-----
-MIIBCgKCAQEA6LszBcC1LGzyr992NzE0ieY+BSaOW622Aa9Bd4ZHLl+TuFQ4lo4g
-5nKaMBwK/BIb9xUfg0Q29/2mgIR6Zr9krM7HjuIcCzFvDtr+L0GQjae9H0pRB2OO
-62cECs5HKhT5DZ98K33vmWiLowc621dQuwKWSQKjWf50XYFw42h21P2KXUGyp2y/
-+aEyZ+uVgLLQbRA1dEjSDZ2iGRy12Mk5gpYc397aYp438fsJoHIgJ2lgMv5h7WY9
-t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs
-5+bfo3Nhmcyvk5ftB0WkJ9z6bNZ7yxrP8wIDAQAB
------END RSA PUBLIC KEY-----', '')
+API_ID = int(os.getenv('30101219', 0))
+API_HASH = os.getenv('2b246afdb60e01c2480732e31b5616a4', '')
 BOT_TOKEN = os.getenv('8275939973:AAEdnqIRYeWIJjU53PqCbc0m0q23FJ4nMD4', '')
 ADMIN_ID = int(os.getenv('8591539773', 0))
 
