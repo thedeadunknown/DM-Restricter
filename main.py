@@ -4,135 +4,106 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+# Logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
 app = Flask(__name__)
 @app.route('/')
-def home(): return "NoDMBot is ACTIVE 🛡️"
+def home(): return "NoDMBot is ONLINE 🛡️"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
 
-# --- SECURE CONFIGURATION ---
+# جلب الإعدادات (تأكد أن الأسماء مطابقة تماماً لما في Render)
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
 
-active_requests = {}
+client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
+active_requests = {}
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
     if ADMIN_ID != 0:
-        conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (ADMIN_ID,))
+        conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (ADMIN_ID,))
     conn.commit()
     conn.close()
 
-client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-
-# --- 1. Protection Logic ---
-@client.on(events.NewMessage(incoming=True))
+# --- 1. الحماية (الرسائل الخاصة) ---
+@client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
-    if event.is_private:
-        # 🛡️ الإضافة: إذا كان الميساج خارج منك (أنت اللي بعثته)، ما يدير والو
-        if event.out: return 
+    # إذا الميساج خارج منك (أنت بعثته) -> لا تفعل شيئاً
+    if event.out: return 
 
-        sender = await event.get_sender()
-        sender_id = event.sender_id
+    sender = await event.get_sender()
+    sender_id = event.sender_id
+    
+    # تجاهل الأدمن والبوتات
+    if sender_id == ADMIN_ID or (sender and sender.bot): return
+
+    conn = sqlite3.connect(DB_FILE)
+    safe = conn.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,)).fetchone()
+    conn.close()
+
+    if not safe:
+        msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
         
-        if sender_id == ADMIN_ID or (sender and sender.bot): return
-
-        conn = sqlite3.connect(DB_FILE)
-        cur = conn.cursor()
-        cur.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,))
-        safe = cur.fetchone()
-        conn.close()
-
-        if not safe:
-            new_msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        # حذف الرسالة مع معالجة الـ FloodWait
+        try:
+            await event.delete()
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds)
+            await event.delete()
+        except: pass
+        
+        if LOG_GROUP_ID != 0:
+            info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
+                    f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
+                    f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
             
-            # 🛡️ الهروب من الحظر عند الحذف
             try:
-                await event.delete()
+                await client.send_message(LOG_GROUP_ID, info)
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
-                await event.delete()
-            except Exception: pass
-            
-            if LOG_GROUP_ID != 0:
-                if sender_id in active_requests:
-                    try:
-                        msg_id, old_text = active_requests[sender_id]
-                        updated_text = old_text.replace("--- **Control Actions** ---", f"💬 **Update:** {new_msg_text}\n\n--- **Control Actions** ---")
-                        await client.edit_message(LOG_GROUP_ID, msg_id, updated_text)
-                        active_requests[sender_id] = (msg_id, updated_text)
-                        return
-                    except Exception as e:
-                        logger.error(f"Error editing: {e}")
+                await client.send_message(LOG_GROUP_ID, info)
 
-                info = (
-                    f"📩 **New Request (NoDMBot):**\n\n"
-                    f"👤 **Name:** {sender.first_name if sender else 'Hidden'}\n"
-                    f"🆔 **ID:** `{sender_id}`\n\n"
-                    f"💬 **Message:** {new_msg_text}\n\n"
-                    f"--- **Control Actions** ---\n"
-                    f"✅ Allow: `.ok {sender_id}`\n"
-                    f"❌ Ignore: `.no {sender_id}`"
-                )
-                
-                # 🛡️ الهروب من الحظر عند الإرسال للجروب
-                try:
-                    sent_msg = await client.send_message(LOG_GROUP_ID, info)
-                    active_requests[sender_id] = (sent_msg.id, info)
-                except FloodWaitError as e:
-                    await asyncio.sleep(e.seconds)
-                    await client.send_message(LOG_GROUP_ID, info)
-
-# --- 2. Admin Command Handling ---
-@client.on(events.NewMessage(pattern=r'\.(ok|no|rem) (\d+)'))
+# --- 2. الأوامر (أوكي، ريم) ---
+@client.on(events.NewMessage(pattern=r'\.(ok|rem) (\d+)'))
 async def admin_action(event):
+    # التأكد أنك أنت من أرسل الأمر
     if event.sender_id != ADMIN_ID: return
     
-    action = event.pattern_match.group(1)
-    target_id = int(event.pattern_match.group(2))
+    cmd = event.raw_text.split()
+    action, target_id = cmd[0], int(cmd[1])
 
-    # 🛡️ حماية الأونر: ما تقدرش تنحي روحك من القائمة
-    if action == "rem" and target_id == ADMIN_ID:
+    # حماية الأونر
+    if action == ".rem" and target_id == ADMIN_ID:
         return await event.respond("⚠️ You can't remove yourself!")
 
     conn = sqlite3.connect(DB_FILE)
-    if action == "ok":
-        conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (target_id,))
-        conn.commit()
-        if target_id in active_requests: del active_requests[target_id]
-        await event.respond(f"✅ {target_id} added.")
-    
-    elif action == "rem":
+    if action == ".ok":
+        conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (target_id,))
+        await event.respond(f"✅ User `{target_id}` allowed.")
+    elif action == ".rem":
         conn.execute("DELETE FROM whitelist WHERE user_id = ?", (target_id,))
-        conn.commit()
-        await event.respond(f"🚫 {target_id} removed.")
-            
-    else: # "no" action
-        if target_id in active_requests: del active_requests[target_id]
-        await event.respond(f"🗑️ Ignored {target_id}.")
-    
+        await event.respond(f"🚫 User `{target_id}` restricted.")
+    conn.commit()
     conn.close()
 
-# --- 3. Status Command ---
+# --- 3. أمر الحالة ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Protection & Flood Resilience Enabled")
+    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Protection & Anti-Flood ON")
 
 async def start_bot():
     init_db()
-    logger.info("🚀 Starting NoDMBot Service...")
     await client.start()
+    print("🚀 Bot is connected and running!")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
