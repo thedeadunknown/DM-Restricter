@@ -115,7 +115,7 @@ async def admin_action(event):
 # --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Secure Mode (Owner & Admin Protected)")
+    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Bot is working")
 
 async def start_bot():
     init_db()
