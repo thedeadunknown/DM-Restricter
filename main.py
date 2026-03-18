@@ -4,6 +4,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
@@ -25,6 +26,9 @@ OWNER_ID = 8591539773
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
+# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم (لمنع تكرار التنبيهات)
+last_alerts = {}
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
@@ -34,7 +38,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 1. Protection Logic ---
+# --- 1. Protection Logic (With Edit Logic) ---
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -50,10 +54,8 @@ async def nodm_logic(event):
 
     if not safe:
         msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        
         try:
-            await event.delete()
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds)
             await event.delete()
         except: pass
         
@@ -61,11 +63,23 @@ async def nodm_logic(event):
             info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
                     f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
                     f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
+            
+            # إذا أرسل الشخص رسائل متتالية، نقوم بتعديل التنبيه السابق بدل إرسال واحد جديد
+            if sender_id in last_alerts:
+                try:
+                    last_msg = last_alerts[sender_id]
+                    new_content = last_msg.text + f"\n💬 **New Msg:** {msg_text}"
+                    await last_msg.edit(new_content)
+                    return
+                except: pass
+
             try:
-                await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, info)
+                last_alerts[sender_id] = sent_msg
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
-                await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, info)
+                last_alerts[sender_id] = sent_msg
 
 # --- 2. Admin Actions (.ok, .rem, .list) ---
 @client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
@@ -75,6 +89,7 @@ async def admin_action(event):
     args = event.raw_text.split()
     action = args[0]
 
+    # عرض القائمة البيضاء
     if action == ".list":
         conn = sqlite3.connect(DB_FILE)
         users = conn.execute("SELECT user_id FROM whitelist").fetchall()
@@ -82,6 +97,7 @@ async def admin_action(event):
         msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
         return await event.respond(msg)
 
+    # إضافة أو إزالة (يدعم معرفات متعددة)
     if len(args) < 2: return
     target_ids = args[1:]
     
@@ -91,7 +107,9 @@ async def admin_action(event):
             tid = int(t_id)
             if action == ".ok":
                 conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
+                if tid in last_alerts: del last_alerts[tid]
                 await event.respond(f"✅ User `{tid}` allowed.")
+            
             elif action == ".rem":
                 if tid in [ADMIN_ID, OWNER_ID]:
                     await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
@@ -99,6 +117,7 @@ async def admin_action(event):
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
                     await event.respond(f"🚫 User `{tid}` restricted.")
         except: continue
+
     conn.commit()
     conn.close()
 
