@@ -4,7 +4,6 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
@@ -15,7 +14,6 @@ def home(): return "NoDMBot is ONLINE 🛡️"
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
 
-# --- CONFIGURATION ---
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
@@ -26,7 +24,6 @@ OWNER_ID = 8591539773
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
-# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم
 last_alerts = {}
 
 def init_db():
@@ -38,7 +35,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 1. Protection Logic ---
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -69,7 +65,6 @@ async def nodm_logic(event):
                     last_msg = last_alerts[sender_id]
                     current_text = last_msg.text
                     
-                    # فصل الرسالة إلى أسطر للبحث عن سطر الأزرار في الأسفل وحذفه
                     lines = current_text.split('\n')
                     footer_idx = len(lines)
                     for i in range(len(lines)-1, -1, -1):
@@ -77,18 +72,15 @@ async def nodm_logic(event):
                             footer_idx = i
                             break
                     
-                    # أخذ كل شيء ما عدا الأزرار السابقة، ثم إضافة الرسالة الجديدة والأزرار في الأسفل
                     main_content = '\n'.join(lines[:footer_idx]).strip()
                     new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
                     
-                    # تحديث الرسالة في القاموس بعد التعديل لحفظ الرسائل الوسطى
                     updated_msg = await last_msg.edit(new_info)
                     last_alerts[sender_id] = updated_msg
                     return
                 except Exception as e:
                     logger.error(f"Edit failed: {e}")
 
-            # أول رسالة تنبيه
             first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
             try:
                 sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
@@ -98,7 +90,6 @@ async def nodm_logic(event):
                 sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
                 last_alerts[sender_id] = sent_msg
 
-# --- 2. Admin Actions (.ok, .rem, .list) ---
 @client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
     if event.sender_id not in [ADMIN_ID, OWNER_ID]: return
@@ -122,16 +113,14 @@ async def admin_action(event):
             tid = int(t_id)
             if action == ".ok":
                 conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
-                # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
                 if tid in last_alerts: del last_alerts[tid]
                 await event.respond(f"✅ User `{tid}` allowed.")
             
             elif action == ".rem":
                 if tid in [ADMIN_ID, OWNER_ID]:
-                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
+                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Yourself or Owner)!")
                 else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
-                    # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
                     if tid in last_alerts: del last_alerts[tid]
                     await event.respond(f"🚫 User `{tid}` restricted.")
         except: continue
@@ -139,10 +128,9 @@ async def admin_action(event):
     conn.commit()
     conn.close()
 
-# --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Secure Mode (Owner & Admin Protected)")
+    await event.edit("Hello user\n🛡️ NoDMBot: ACTIVE")
 
 async def start_bot():
     init_db()
