@@ -51,6 +51,7 @@ async def nodm_logic(event):
     if not safe:
         msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
         
+        # حذف الرسالة فوراً
         try:
             await event.delete()
         except FloodWaitError as e:
@@ -58,6 +59,7 @@ async def nodm_logic(event):
             await event.delete()
         except: pass
         
+        # إرسال التنبيه للجروب (هذا الجزء يشتغل مع كل رسالة جديدة)
         if LOG_GROUP_ID != 0:
             info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
                     f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
