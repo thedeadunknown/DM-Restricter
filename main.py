@@ -21,6 +21,8 @@ API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
+
+# معرف المطور (أنت) - ثابت لا يتغير حتى لو توزع السورس
 OWNER_ID = 8591539773 
 
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
@@ -29,6 +31,7 @@ DB_FILE = "whitelist.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
+    # إضافة الأدمن والمطور تلقائياً للقائمة البيضاء
     if ADMIN_ID != 0:
         conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (ADMIN_ID,))
     conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (OWNER_ID,))
@@ -39,8 +42,11 @@ def init_db():
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
+
     sender = await event.get_sender()
     sender_id = event.sender_id
+    
+    # تجاهل الأدمن، المطور، والبوتات
     if sender_id in [ADMIN_ID, OWNER_ID] or (sender and sender.bot): return
 
     conn = sqlite3.connect(DB_FILE)
@@ -48,7 +54,8 @@ async def nodm_logic(event):
     conn.close()
 
     if not safe:
-        new_msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        
         try:
             await event.delete()
         except FloodWaitError as e:
@@ -57,15 +64,9 @@ async def nodm_logic(event):
         except: pass
         
         if LOG_GROUP_ID != 0:
-            info = (
-                f"📩 **New Message Request (NoDMBot):**\n\n"
-                f"👤 **Name:** {sender.first_name if sender else 'Hidden'} {sender.last_name if sender and sender.last_name else ''}\n"
-                f"🆔 **ID:** `{sender_id}`\n\n"
-                f"💬 **Message:** {new_msg_text}\n\n"
-                f"--- **Control Actions** ---\n"
-                f"✅ Allow: `.ok {sender_id}`\n"
-                f"🚫 Remove: `.rem {sender_id}`"
-            )
+            info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
+                    f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
+                    f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
             try:
                 await client.send_message(LOG_GROUP_ID, info)
             except FloodWaitError as e:
@@ -80,6 +81,7 @@ async def admin_action(event):
     args = event.raw_text.split()
     action = args[0]
 
+    # عرض القائمة
     if action == ".list":
         conn = sqlite3.connect(DB_FILE)
         users = conn.execute("SELECT user_id FROM whitelist").fetchall()
@@ -87,6 +89,7 @@ async def admin_action(event):
         msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
         return await event.respond(msg)
 
+    # معالجة إضافة أو إزالة المستخدمين (يدعم معرفات متعددة)
     if len(args) < 2: return
     target_ids = args[1:]
     
@@ -95,13 +98,15 @@ async def admin_action(event):
         try:
             tid = int(t_id)
             if action == ".ok":
-                conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (tid,))
-                await event.respond(f"✅ {tid} added to whitelist.")
+                conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
+                await event.respond(f"✅ User `{tid}` allowed.")
             
             elif action == ".rem":
-                if tid != ADMIN_ID and tid != OWNER_ID:
+                if tid in [ADMIN_ID, OWNER_ID]:
+                    await event.respond("⚠️ **Action Denied:** Cannot remove Admin or Owner!")
+                else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
-                    await event.respond(f"🚫 {tid} removed from whitelist.")
+                    await event.respond(f"🚫 User `{tid}` restricted.")
         except: continue
 
     conn.commit()
@@ -110,7 +115,7 @@ async def admin_action(event):
 # --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Secure Mode (Hidden Env)")
+    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Secure Mode (Owner & Admin Protected)")
 
 async def start_bot():
     init_db()
