@@ -50,8 +50,6 @@ async def nodm_logic(event):
 
     if not safe:
         msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
-        
-        # حذف الرسالة فوراً
         try:
             await event.delete()
         except FloodWaitError as e:
@@ -59,7 +57,6 @@ async def nodm_logic(event):
             await event.delete()
         except: pass
         
-        # إرسال التنبيه للجروب (هذا الجزء يشتغل مع كل رسالة جديدة)
         if LOG_GROUP_ID != 0:
             info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
                     f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
@@ -70,7 +67,7 @@ async def nodm_logic(event):
                 await asyncio.sleep(e.seconds)
                 await client.send_message(LOG_GROUP_ID, info)
 
-# --- 2. Admin Actions ---
+# --- 2. Admin Actions (.ok, .rem, .list) ---
 @client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
     if event.sender_id not in [ADMIN_ID, OWNER_ID]: return
@@ -95,15 +92,13 @@ async def admin_action(event):
             if action == ".ok":
                 conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
                 await event.respond(f"✅ User `{tid}` allowed.")
-            
             elif action == ".rem":
                 if tid in [ADMIN_ID, OWNER_ID]:
-                    await event.respond("⚠️ **Action Denied:** Cannot remove Admin or Owner!")
+                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
                 else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
                     await event.respond(f"🚫 User `{tid}` restricted.")
         except: continue
-
     conn.commit()
     conn.close()
 
