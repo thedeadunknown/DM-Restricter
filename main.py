@@ -67,49 +67,55 @@ async def nodm_logic(event):
                 await client.send_message(LOG_GROUP_ID, info)
 
 # --- 2. Admin Actions (.ok, .rem, .list) ---
-@client.on(events.NewMessage(pattern=r'\.(ok|rem|list)( \d+)?'))
+@client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
     if event.sender_id not in [ADMIN_ID, OWNER_ID]: return
     
-    cmd = event.raw_text.split()
-    action = cmd[0]
+    args = event.raw_text.split()
+    action = args[0]
 
-    # ميزة إظهار القائمة البيضاء
     if action == ".list":
         conn = sqlite3.connect(DB_FILE)
         users = conn.execute("SELECT user_id FROM whitelist").fetchall()
         conn.close()
-        
-        if users:
-            msg = "📃 **Whitelisted Users:**\n\n"
-            for u in users:
-                msg += f"• `{u[0]}`\n"
-            await event.respond(msg)
-        else:
-            await event.respond("📭 Whitelist is empty.")
-        return
+        msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
+        return await event.respond(msg)
 
-    # معالجة .ok و .rem (تحتاج ID)
-    if len(cmd) < 2: return
-    target_id = int(cmd[1])
-
-    if action == ".rem" and target_id in [ADMIN_ID, OWNER_ID]:
-        return await event.respond("⚠️ Cannot remove Admin or Owner!")
-
+    # نظام الحذف أو الإضافة المتعددة
+    if len(args) < 2: return
+    target_ids = args[1:] # جلب كل الـ IDs المكتوبة بعد الأمر
+    
     conn = sqlite3.connect(DB_FILE)
-    if action == ".ok":
-        conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (target_id,))
-        await event.respond(f"✅ User `{target_id}` allowed.")
-    elif action == ".rem":
-        conn.execute("DELETE FROM whitelist WHERE user_id = ?", (target_id,))
-        await event.respond(f"🚫 User `{target_id}` restricted.")
+    success_count = 0
+    errors = []
+
+    for t_id in target_ids:
+        try:
+            tid = int(t_id)
+            if action == ".rem":
+                if tid in [ADMIN_ID, OWNER_ID]:
+                    errors.append(f"`{tid}` (Protected)")
+                    continue
+                conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
+            elif action == ".ok":
+                conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
+            success_count += 1
+        except ValueError:
+            errors.append(f"`{t_id}` (Invalid)")
+
     conn.commit()
     conn.close()
+
+    # رد مجمع بالنتيجة
+    status_msg = f"✅ Done! Processed **{success_count}** IDs."
+    if errors:
+        status_msg += f"\n⚠️ Skipped: {', '.join(errors)}"
+    await event.respond(status_msg)
 
 # --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Whitelist System Ready")
+    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Multi-ID Support Enabled")
 
 async def start_bot():
     init_db()
