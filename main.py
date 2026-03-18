@@ -4,7 +4,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-# Logging
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
@@ -48,7 +48,7 @@ async def nodm_logic(event):
     conn.close()
 
     if not safe:
-        msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        new_msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
         try:
             await event.delete()
         except FloodWaitError as e:
@@ -57,9 +57,15 @@ async def nodm_logic(event):
         except: pass
         
         if LOG_GROUP_ID != 0:
-            info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
-                    f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
-                    f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
+            info = (
+                f"📩 **New Message Request (NoDMBot):**\n\n"
+                f"👤 **Name:** {sender.first_name if sender else 'Hidden'} {sender.last_name if sender and sender.last_name else ''}\n"
+                f"🆔 **ID:** `{sender_id}`\n\n"
+                f"💬 **Message:** {new_msg_text}\n\n"
+                f"--- **Control Actions** ---\n"
+                f"✅ Allow: `.ok {sender_id}`\n"
+                f"🚫 Remove: `.rem {sender_id}`"
+            )
             try:
                 await client.send_message(LOG_GROUP_ID, info)
             except FloodWaitError as e:
@@ -81,41 +87,30 @@ async def admin_action(event):
         msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
         return await event.respond(msg)
 
-    # نظام الحذف أو الإضافة المتعددة
     if len(args) < 2: return
-    target_ids = args[1:] # جلب كل الـ IDs المكتوبة بعد الأمر
+    target_ids = args[1:]
     
     conn = sqlite3.connect(DB_FILE)
-    success_count = 0
-    errors = []
-
     for t_id in target_ids:
         try:
             tid = int(t_id)
-            if action == ".rem":
-                if tid in [ADMIN_ID, OWNER_ID]:
-                    errors.append(f"`{tid}` (Protected)")
-                    continue
-                conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
-            elif action == ".ok":
-                conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
-            success_count += 1
-        except ValueError:
-            errors.append(f"`{t_id}` (Invalid)")
+            if action == ".ok":
+                conn.execute("INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)", (tid,))
+                await event.respond(f"✅ {tid} added to whitelist.")
+            
+            elif action == ".rem":
+                if tid != ADMIN_ID and tid != OWNER_ID:
+                    conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
+                    await event.respond(f"🚫 {tid} removed from whitelist.")
+        except: continue
 
     conn.commit()
     conn.close()
 
-    # رد مجمع بالنتيجة
-    status_msg = f"✅ Done! Processed **{success_count}** IDs."
-    if errors:
-        status_msg += f"\n⚠️ Skipped: {', '.join(errors)}"
-    await event.respond(status_msg)
-
 # --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Multi-ID Support Enabled")
+    await event.edit("🛡️ NoDMBot: ACTIVE\nStatus: Secure Mode (Hidden Env)")
 
 async def start_bot():
     init_db()
