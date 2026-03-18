@@ -26,7 +26,7 @@ OWNER_ID = 8591539773
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
-# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم (لمنع تكرار التنبيهات)
+# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم
 last_alerts = {}
 
 def init_db():
@@ -38,7 +38,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 1. Protection Logic (With Edit Logic) ---
+# --- 1. Protection Logic (With Smart Append Logic) ---
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -53,32 +53,44 @@ async def nodm_logic(event):
     conn.close()
 
     if not safe:
-        msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        # التعرف على نوع الرسالة (نص أو مرفق)
+        msg_content = event.text if event.text else "🖼️ [Media/Attachment/File]"
         
         try:
             await event.delete()
         except: pass
         
         if LOG_GROUP_ID != 0:
-            info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
-                    f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
-                    f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
-            
-            # إذا أرسل الشخص رسائل متتالية، نقوم بتعديل التنبيه السابق بدل إرسال واحد جديد
+            # القالب الأساسي للرسالة
+            header = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
+                      f"🆔 **ID:** `{sender_id}`\n")
+            footer = f"\n✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`"
+
+            # إذا كان المستخدم قد أرسل رسالة من قبل (منطق التعديل)
             if sender_id in last_alerts:
                 try:
                     last_msg = last_alerts[sender_id]
-                    new_content = last_msg.text + f"\n💬 **New Msg:** {msg_text}"
-                    await last_msg.edit(new_content)
+                    current_text = last_msg.text
+                    
+                    # فصل الأزرار (Footer) عن المحتوى القديم لإضافة الرسالة الجديدة بينهما
+                    if "✅ `.ok" in current_text:
+                        content_part = current_text.split("✅ `.ok")[0].strip()
+                        new_info = content_part + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    else:
+                        new_info = current_text + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    
+                    await last_msg.edit(new_info)
                     return
                 except: pass
 
+            # أول رسالة تنبيه
+            first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
             try:
-                sent_msg = await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
                 last_alerts[sender_id] = sent_msg
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
-                sent_msg = await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
                 last_alerts[sender_id] = sent_msg
 
 # --- 2. Admin Actions (.ok, .rem, .list) ---
@@ -89,7 +101,6 @@ async def admin_action(event):
     args = event.raw_text.split()
     action = args[0]
 
-    # عرض القائمة البيضاء
     if action == ".list":
         conn = sqlite3.connect(DB_FILE)
         users = conn.execute("SELECT user_id FROM whitelist").fetchall()
@@ -97,7 +108,6 @@ async def admin_action(event):
         msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
         return await event.respond(msg)
 
-    # إضافة أو إزالة (يدعم معرفات متعددة)
     if len(args) < 2: return
     target_ids = args[1:]
     
