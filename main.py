@@ -21,17 +21,17 @@ API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
-
-# معرف المطور (أنت) - ثابت لا يتغير حتى لو توزع السورس
 OWNER_ID = 8591539773 
 
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
+# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم
+last_alerts = {}
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
-    # إضافة الأدمن والمطور تلقائياً للقائمة البيضاء
     if ADMIN_ID != 0:
         conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (ADMIN_ID,))
     conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (OWNER_ID,))
@@ -46,7 +46,6 @@ async def nodm_logic(event):
     sender = await event.get_sender()
     sender_id = event.sender_id
     
-    # تجاهل الأدمن، المطور، والبوتات
     if sender_id in [ADMIN_ID, OWNER_ID] or (sender and sender.bot): return
 
     conn = sqlite3.connect(DB_FILE)
@@ -54,45 +53,86 @@ async def nodm_logic(event):
     conn.close()
 
     if not safe:
-        msg_text = event.text if event.text else "🖼️ [Media/Attachment]"
+        msg_content = event.text if event.text else "🖼️ [Media/Attachment/File]"
         
         try:
-            await event.delete()
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds)
             await event.delete()
         except: pass
         
         if LOG_GROUP_ID != 0:
-            info = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
-                    f"🆔 **ID:** `{sender_id}`\n💬 **Msg:** {msg_text}\n\n"
-                    f"✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`")
+            header = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
+                      f"🆔 **ID:** `{sender_id}`\n")
+            footer = f"\n✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`"
+
+            if sender_id in last_alerts:
+                try:
+                    last_msg = last_alerts[sender_id]
+                    # استعمال raw_text للحفاظ على التنسيقات وتجنب الأخطاء
+                    current_text = last_msg.raw_text
+                    marker = "✅ `.ok"
+                    
+                    if marker in current_text:
+                        parts = current_text.split(marker)
+                        main_content = parts[0].strip()
+                        new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    else:
+                        new_info = current_text + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    
+                    # تحديث الرسالة في القاموس بعد التعديل لحفظ الرسائل الوسطى
+                    updated_msg = await last_msg.edit(new_info)
+                    last_alerts[sender_id] = updated_msg
+                    return
+                except Exception as e:
+                    logger.error(f"Edit failed: {e}")
+
+            # أول رسالة تنبيه
+            first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
             try:
-                await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
+                last_alerts[sender_id] = sent_msg
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
-                await client.send_message(LOG_GROUP_ID, info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
+                last_alerts[sender_id] = sent_msg
 
-# --- 2. Admin Actions ---
-@client.on(events.NewMessage(pattern=r'\.(ok|rem) (\d+)'))
+# --- 2. Admin Actions (.ok, .rem, .list) ---
+@client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
-    # السماح فقط للأدمن أو المطور بالتحكم
     if event.sender_id not in [ADMIN_ID, OWNER_ID]: return
     
-    cmd = event.raw_text.split()
-    action, target_id = cmd[0], int(cmd[1])
+    args = event.raw_text.split()
+    action = args[0]
 
-    # حماية: لا يمكن للأدمن إزالة المطور أو إزالة نفسه
-    if action == ".rem" and target_id in [ADMIN_ID, OWNER_ID]:
-        return await event.respond("⚠️ **Action Denied:** Cannot remove Admin or Owner!")
+    if action == ".list":
+        conn = sqlite3.connect(DB_FILE)
+        users = conn.execute("SELECT user_id FROM whitelist").fetchall()
+        conn.close()
+        msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
+        return await event.respond(msg)
 
+    if len(args) < 2: return
+    target_ids = args[1:]
+    
     conn = sqlite3.connect(DB_FILE)
-    if action == ".ok":
-        conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (target_id,))
-        await event.respond(f"✅ User `{target_id}` allowed.")
-    elif action == ".rem":
-        conn.execute("DELETE FROM whitelist WHERE user_id = ?", (target_id,))
-        await event.respond(f"🚫 User `{target_id}` restricted.")
+    for t_id in target_ids:
+        try:
+            tid = int(t_id)
+            if action == ".ok":
+                conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
+                # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
+                if tid in last_alerts: del last_alerts[tid]
+                await event.respond(f"✅ User `{tid}` allowed.")
+            
+            elif action == ".rem":
+                if tid in [ADMIN_ID, OWNER_ID]:
+                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
+                else:
+                    conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
+                    # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
+                    if tid in last_alerts: del last_alerts[tid]
+                    await event.respond(f"🚫 User `{tid}` restricted.")
+        except: continue
+
     conn.commit()
     conn.close()
 
