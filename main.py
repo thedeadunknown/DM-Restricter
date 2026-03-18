@@ -67,16 +67,19 @@ async def nodm_logic(event):
             if sender_id in last_alerts:
                 try:
                     last_msg = last_alerts[sender_id]
-                    # استعمال raw_text للحفاظ على التنسيقات وتجنب الأخطاء
-                    current_text = last_msg.raw_text
-                    marker = "✅ `.ok"
+                    current_text = last_msg.text
                     
-                    if marker in current_text:
-                        parts = current_text.split(marker)
-                        main_content = parts[0].strip()
-                        new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
-                    else:
-                        new_info = current_text + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    # فصل الرسالة إلى أسطر للبحث عن سطر الأزرار في الأسفل وحذفه
+                    lines = current_text.split('\n')
+                    footer_idx = len(lines)
+                    for i in range(len(lines)-1, -1, -1):
+                        if lines[i].startswith('✅'):
+                            footer_idx = i
+                            break
+                    
+                    # أخذ كل شيء ما عدا الأزرار السابقة، ثم إضافة الرسالة الجديدة والأزرار في الأسفل
+                    main_content = '\n'.join(lines[:footer_idx]).strip()
+                    new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
                     
                     # تحديث الرسالة في القاموس بعد التعديل لحفظ الرسائل الوسطى
                     updated_msg = await last_msg.edit(new_info)
