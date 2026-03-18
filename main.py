@@ -103,7 +103,7 @@ async def admin_action(event):
             
             elif action == ".rem":
                 if tid in [ADMIN_ID, OWNER_ID]:
-                    await event.respond("⚠️ **Action Denied:** Cannot remove Admin or Owner!")
+                    await event.respond("⚠️ **Action Denied:** Cannot remove Yourself or Owner!")
                 else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
                     await event.respond(f"🚫 User `{tid}` restricted.")
