@@ -38,7 +38,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- 1. Protection Logic (With Smart Append Logic) ---
+# --- 1. Protection Logic ---
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -53,7 +53,6 @@ async def nodm_logic(event):
     conn.close()
 
     if not safe:
-        # التعرف على نوع الرسالة (نص أو مرفق)
         msg_content = event.text if event.text else "🖼️ [Media/Attachment/File]"
         
         try:
@@ -61,27 +60,29 @@ async def nodm_logic(event):
         except: pass
         
         if LOG_GROUP_ID != 0:
-            # القالب الأساسي للرسالة
             header = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
                       f"🆔 **ID:** `{sender_id}`\n")
             footer = f"\n✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`"
 
-            # إذا كان المستخدم قد أرسل رسالة من قبل (منطق التعديل)
             if sender_id in last_alerts:
                 try:
                     last_msg = last_alerts[sender_id]
+                    # نأخذ النص الحالي ونبحث عن مكان الأزرار لنضع الرسالة الجديدة فوقها
                     current_text = last_msg.text
+                    marker = "✅ `.ok"
                     
-                    # فصل الأزرار (Footer) عن المحتوى القديم لإضافة الرسالة الجديدة بينهما
-                    if "✅ `.ok" in current_text:
-                        content_part = current_text.split("✅ `.ok")[0].strip()
-                        new_info = content_part + f"\n💬 **Msg:** {msg_content}\n" + footer
+                    if marker in current_text:
+                        # نقسم الرسالة ونأخذ كل شيء قبل الأزرار (لنحافظ على الرسائل الوسطى)
+                        parts = current_text.split(marker)
+                        main_content = parts[0].strip()
+                        new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
                     else:
                         new_info = current_text + f"\n💬 **Msg:** {msg_content}\n" + footer
                     
                     await last_msg.edit(new_info)
                     return
-                except: pass
+                except Exception as e:
+                    logger.error(f"Edit failed: {e}")
 
             # أول رسالة تنبيه
             first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
@@ -117,6 +118,7 @@ async def admin_action(event):
             tid = int(t_id)
             if action == ".ok":
                 conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (tid,))
+                # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
                 if tid in last_alerts: del last_alerts[tid]
                 await event.respond(f"✅ User `{tid}` allowed.")
             
@@ -125,6 +127,8 @@ async def admin_action(event):
                     await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
                 else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
+                    # مسح من الذاكرة لكي تظهر رسالة جديدة إذا راسل مستقبلاً
+                    if tid in last_alerts: del last_alerts[tid]
                     await event.respond(f"🚫 User `{tid}` restricted.")
         except: continue
 
