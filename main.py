@@ -4,6 +4,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
@@ -14,16 +15,19 @@ def home(): return "NoDMBot is ONLINE 🛡️"
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
 
+# --- CONFIGURATION ---
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
+# الأونر ثابت للحماية البرمجية فقط
 OWNER_ID = 8591539773 
 
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
+# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم
 last_alerts = {}
 
 def init_db():
@@ -31,10 +35,12 @@ def init_db():
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
     if ADMIN_ID != 0:
         conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (ADMIN_ID,))
+    # إضافة الأونر دائماً لضمان عدم حذفه
     conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (OWNER_ID,))
     conn.commit()
     conn.close()
 
+# --- 1. Protection Logic ---
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -42,7 +48,8 @@ async def nodm_logic(event):
     sender = await event.get_sender()
     sender_id = event.sender_id
     
-    if sender_id in [ADMIN_ID, OWNER_ID] or (sender and sender.bot): return
+    # البوت يتجاهل رسائل الآدمن المذكور في السيرفر + الأونر الثابت في الكود
+    if sender_id == ADMIN_ID or sender_id == OWNER_ID or (sender and sender.bot): return
 
     conn = sqlite3.connect(DB_FILE)
     safe = conn.execute("SELECT 1 FROM whitelist WHERE user_id = ?", (sender_id,)).fetchone()
@@ -81,6 +88,7 @@ async def nodm_logic(event):
                 except Exception as e:
                     logger.error(f"Edit failed: {e}")
 
+            # إرسال أول رسالة تنبيه
             first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
             try:
                 sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
@@ -90,9 +98,12 @@ async def nodm_logic(event):
                 sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
                 last_alerts[sender_id] = sent_msg
 
+# --- 2. Admin Actions (.ok, .rem, .list) ---
 @client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
-    if event.sender_id not in [ADMIN_ID, OWNER_ID]: return
+    # الاستجابة "فقط" للآيدي الموجود في الـ Environment Variable الخاص بالسيرفر
+    if event.sender_id != ADMIN_ID:
+        return
     
     args = event.raw_text.split()
     action = args[0]
@@ -117,8 +128,9 @@ async def admin_action(event):
                 await event.respond(f"✅ User `{tid}` allowed.")
             
             elif action == ".rem":
-                if tid in [ADMIN_ID, OWNER_ID]:
-                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Yourself or Owner)!")
+                # منع حذف الآدمن الحالي أو الأونر الثابت
+                if tid == ADMIN_ID or tid == OWNER_ID:
+                    await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
                 else:
                     conn.execute("DELETE FROM whitelist WHERE user_id = ?", (tid,))
                     if tid in last_alerts: del last_alerts[tid]
@@ -128,9 +140,12 @@ async def admin_action(event):
     conn.commit()
     conn.close()
 
+# --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    await event.edit("Hello user\n🛡️ NoDMBot: ACTIVE")
+    # لا يستجيب إلا للآدمن المحدد
+    if event.sender_id == ADMIN_ID:
+        await event.edit("Hello user\n🛡️ NoDMBot: ACTIVE")
 
 async def start_bot():
     init_db()
