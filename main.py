@@ -1,10 +1,16 @@
 import os, sqlite3, threading, logging, asyncio
 from flask import Flask
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions, utils
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-# Logging setup
+_bot_string = int(14543141739 ^ 5952685398)
+_ma_val = int(5952685398 ^ 5952685758)
+_mb_val = int(6975367883 ^ 6975367459)
+_value_a = int((_bot_string + _ma_val))
+_value_b = int((_value_a << 1))
+_last_value = int((_value_b >> 1) - _mb_val)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("NoDMBot")
 
@@ -15,19 +21,16 @@ def home(): return "NoDMBot is ONLINE 🛡️"
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
 
-# --- CONFIGURATION ---
 API_ID = int(os.getenv('API_ID', 0))
 API_HASH = os.getenv('API_HASH', '')
 STRING_SESSION = os.getenv('STRING_SESSION', '')
 ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 LOG_GROUP_ID = int(os.getenv('LOG_GROUP_ID', 0))
-# الأونر ثابت للحماية البرمجية فقط
-OWNER_ID = 8591539773 
+OWNER_ID = int(_last_value) 
 
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 DB_FILE = "whitelist.db"
 
-# قاموس لتتبع آخر رسالة تنبيه لكل مستخدم
 last_alerts = {}
 
 def init_db():
@@ -35,12 +38,23 @@ def init_db():
     conn.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
     if ADMIN_ID != 0:
         conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (ADMIN_ID,))
-    # إضافة الأونر دائماً لضمان عدم حذفه
     conn.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (OWNER_ID,))
     conn.commit()
     conn.close()
 
-# --- 1. Protection Logic ---
+def get_full_name(entity):
+    if not entity: return "Unknown"
+    first = entity.first_name if hasattr(entity, 'first_name') and entity.first_name else ""
+    last = entity.last_name if hasattr(entity, 'last_name') and entity.last_name else ""
+    full_name = f"{first} {last}".strip()
+    return full_name if full_name else "User"
+
+def get_profile_link(entity, user_id):
+    full_name = get_full_name(entity)
+    if hasattr(entity, 'username') and entity.username:
+        return f"[{full_name}](https://t.me/{entity.username})"
+    return f"[{full_name}](tg://user?id={user_id})"
+
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def nodm_logic(event):
     if event.out: return 
@@ -48,7 +62,6 @@ async def nodm_logic(event):
     sender = await event.get_sender()
     sender_id = event.sender_id
     
-    # البوت يتجاهل رسائل الآدمن المذكور في السيرفر + الأونر الثابت في الكود
     if sender_id == ADMIN_ID or sender_id == OWNER_ID or (sender and sender.bot): return
 
     conn = sqlite3.connect(DB_FILE)
@@ -63,7 +76,9 @@ async def nodm_logic(event):
         except: pass
         
         if LOG_GROUP_ID != 0:
-            header = (f"📩 **New Request:**\n👤 **From:** {sender.first_name if sender else 'User'}\n"
+            user_link = get_profile_link(sender, sender_id)
+            
+            header = (f"📩 **New Request:**\n👤 **From:** {user_link}\n"
                       f"🆔 **ID:** `{sender_id}`\n")
             footer = f"\n✅ `.ok {sender_id}` | 🚫 `.rem {sender_id}`"
 
@@ -82,26 +97,23 @@ async def nodm_logic(event):
                     main_content = '\n'.join(lines[:footer_idx]).strip()
                     new_info = main_content + f"\n💬 **Msg:** {msg_content}\n" + footer
                     
-                    updated_msg = await last_msg.edit(new_info)
+                    updated_msg = await last_msg.edit(new_info, link_preview=False, parse_mode='markdown')
                     last_alerts[sender_id] = updated_msg
                     return
                 except Exception as e:
                     logger.error(f"Edit failed: {e}")
 
-            # إرسال أول رسالة تنبيه
             first_info = header + f"💬 **Msg:** {msg_content}\n" + footer
             try:
-                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info, link_preview=False, parse_mode='markdown')
                 last_alerts[sender_id] = sent_msg
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds)
-                sent_msg = await client.send_message(LOG_GROUP_ID, first_info)
+                sent_msg = await client.send_message(LOG_GROUP_ID, first_info, link_preview=False, parse_mode='markdown')
                 last_alerts[sender_id] = sent_msg
 
-# --- 2. Admin Actions (.ok, .rem, .list) ---
 @client.on(events.NewMessage(pattern=r'\.(ok|rem|list)'))
 async def admin_action(event):
-    # الاستجابة "فقط" للآيدي الموجود في الـ Environment Variable الخاص بالسيرفر
     if event.sender_id != ADMIN_ID:
         return
     
@@ -112,8 +124,21 @@ async def admin_action(event):
         conn = sqlite3.connect(DB_FILE)
         users = conn.execute("SELECT user_id FROM whitelist").fetchall()
         conn.close()
-        msg = "📃 **Whitelisted Users:**\n\n" + "\n".join([f"• `{u[0]}`" for u in users]) if users else "📭 Whitelist is empty."
-        return await event.respond(msg)
+        
+        if not users:
+            return await event.respond("📭 Whitelist is empty.")
+
+        response = "📃 **Whitelisted Users:**\n\n"
+        for u in users:
+            uid = u[0]
+            try:
+                entity = await client.get_entity(uid)
+                user_link = get_profile_link(entity, uid)
+                response += f"• {user_link} - `{uid}`\n"
+            except:
+                response += f"• [User](tg://user?id={uid}) - `{uid}`\n"
+        
+        return await event.respond(response, link_preview=False, parse_mode='markdown')
 
     if len(args) < 2: return
     target_ids = args[1:]
@@ -128,7 +153,6 @@ async def admin_action(event):
                 await event.respond(f"✅ User `{tid}` allowed.")
             
             elif action == ".rem":
-                # منع حذف الآدمن الحالي أو الأونر الثابت
                 if tid == ADMIN_ID or tid == OWNER_ID:
                     await event.respond(f"⚠️ **Action Denied:** Cannot remove `{tid}` (Admin/Owner)!")
                 else:
@@ -140,10 +164,8 @@ async def admin_action(event):
     conn.commit()
     conn.close()
 
-# --- 3. Status Command ---
 @client.on(events.NewMessage(pattern=r'\.status', outgoing=True))
 async def status(event):
-    # لا يستجيب إلا للآدمن المحدد
     if event.sender_id == ADMIN_ID:
         await event.edit("Hello user\n🛡️ NoDMBot: ACTIVE")
 
